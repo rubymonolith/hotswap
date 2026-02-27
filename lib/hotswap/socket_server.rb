@@ -83,7 +83,6 @@ module Hotswap
       return unless line
 
       parts = Shellwords.split(line.strip)
-      return if parts.empty?
 
       # Grab the stderr socket if one is waiting
       stderr_io = take_stderr_client

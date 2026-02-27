@@ -24,6 +24,18 @@ RSpec.describe Hotswap::SocketServer do
     FileUtils.rm_rf(tmpdir)
   end
 
+  describe "no args (help)" do
+    it "returns help output over the socket" do
+      sock = UNIXSocket.new(socket_path)
+      sock.write("\n")
+      sock.close_write
+      output = sock.read
+      sock.close
+      expect(output).to include("cp SRC DST")
+      expect(output).to include("version")
+    end
+  end
+
   describe "version command (stdout only)" do
     it "returns the version over the socket" do
       sock = UNIXSocket.new(socket_path)
