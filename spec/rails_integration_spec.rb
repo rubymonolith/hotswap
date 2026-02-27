@@ -5,7 +5,7 @@ require "sqlite3"
 require "securerandom"
 require "json"
 
-RSpec.describe "Rails integration: boot app, push, verify", :rails do
+RSpec.describe "Rails integration: boot app, cp, verify", :rails do
   let(:fixture_dir) { File.expand_path("../tmp/rails_#{Process.pid}", __dir__) }
   let(:db_path) { File.join(fixture_dir, "test.sqlite3") }
   let(:socket_path) { File.join(fixture_dir, "hotswap.sock") }
@@ -17,14 +17,12 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     FileUtils.mkdir_p(File.join(fixture_dir, "config"))
     FileUtils.mkdir_p(File.join(fixture_dir, "tmp"))
 
-    # Seed the database
     db = SQLite3::Database.new(db_path)
     db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
     db.execute("INSERT INTO items (name) VALUES ('alpha')")
     db.execute("INSERT INTO items (name) VALUES ('bravo')")
     db.close
 
-    # Boot the Rails app as a subprocess
     @pid = spawn(
       {
         "HOTSWAP_FIXTURE_DIR" => fixture_dir,
@@ -37,7 +35,6 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
       err: "/dev/null",
     )
 
-    # Wait for the app to be ready
     wait_for_server!
   end
 
@@ -63,13 +60,12 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     JSON.parse(body)
   end
 
-  def push_db(new_db_path)
+  def cp_push(new_db_path)
     stderr_sock = UNIXSocket.new(stderr_socket_path)
     sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    sock.write("push\n")
-    File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
+    sock.write("cp #{new_db_path} #{db_path}\n")
     sock.close_write
 
     stdout = sock.read
@@ -80,12 +76,28 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     { stdout: stdout, stderr: stderr_out }
   end
 
-  def pull_db
+  def cp_pull(destination)
     stderr_sock = UNIXSocket.new(stderr_socket_path)
     sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    sock.write("pull\n")
+    sock.write("cp #{db_path} #{destination}\n")
+    sock.close_write
+
+    stdout = sock.read
+    stderr_out = stderr_sock.read
+    sock.close
+    stderr_sock.close
+
+    { stdout: stdout, stderr: stderr_out }
+  end
+
+  def cp_pull_stdout
+    stderr_sock = UNIXSocket.new(stderr_socket_path)
+    sleep 0.05
+
+    sock = UNIXSocket.new(socket_path)
+    sock.write("cp #{db_path} -\n")
     sock.close_write
 
     stdout = sock.read
@@ -108,11 +120,11 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     expect(get_items).to eq(["alpha", "bravo"])
   end
 
-  it "swaps the database and serves new data" do
+  it "swaps the database via cp and serves new data" do
     expect(get_items).to eq(["alpha", "bravo"])
 
     new_db = make_db(fixture_dir, ["charlie", "delta"])
-    result = push_db(new_db)
+    result = cp_push(new_db)
 
     expect(result[:stdout].strip).to eq("OK")
     expect(result[:stderr]).to include("Swapping")
@@ -120,8 +132,8 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     expect(get_items).to eq(["charlie", "delta"])
   end
 
-  it "pulls the current database" do
-    bytes = pull_db
+  it "pulls the current database via cp to stdout" do
+    bytes = cp_pull_stdout
     pulled_path = File.join(fixture_dir, "pulled.sqlite3")
     File.binwrite(pulled_path, bytes)
 
@@ -132,23 +144,30 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     expect(rows).to eq([["alpha"], ["bravo"]])
   end
 
-  it "round-trips: pull, push different, pull again" do
-    # Pull original
-    original_bytes = pull_db
+  it "pulls the current database via cp to a file" do
+    pulled_path = File.join(fixture_dir, "pulled.sqlite3")
+    result = cp_pull(pulled_path)
+    expect(result[:stderr]).to include("OK")
 
-    # Push replacement
+    db = SQLite3::Database.new(pulled_path)
+    rows = db.execute("SELECT name FROM items ORDER BY name")
+    db.close
+
+    expect(rows).to eq([["alpha"], ["bravo"]])
+  end
+
+  it "round-trips: pull, push different, pull again" do
+    original_bytes = cp_pull_stdout
+
     new_db = make_db(fixture_dir, ["echo", "foxtrot"])
-    result = push_db(new_db)
+    result = cp_push(new_db)
     expect(result[:stdout].strip).to eq("OK")
 
-    # HTTP confirms the swap
     expect(get_items).to eq(["echo", "foxtrot"])
 
-    # Pull the swapped DB
-    swapped_bytes = pull_db
+    swapped_bytes = cp_pull_stdout
     expect(swapped_bytes).not_to eq(original_bytes)
 
-    # Verify the pulled bytes are a valid DB with the new data
     pulled_path = File.join(fixture_dir, "round_trip.sqlite3")
     File.binwrite(pulled_path, swapped_bytes)
     db = SQLite3::Database.new(pulled_path)
@@ -164,7 +183,7 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
     sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    sock.write("push\n")
+    sock.write("cp - #{db_path}\n")
     sock.write("this is not a sqlite database")
     sock.close_write
 
@@ -175,14 +194,13 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
 
     expect(stderr_out).to include("ERROR")
 
-    # Still serving original data
     expect(get_items).to eq(["alpha", "bravo"])
   end
 
   it "handles multiple sequential swaps" do
-    ["golf", "hotel", "india"].each_with_index do |name, i|
+    ["golf", "hotel", "india"].each do |name|
       new_db = make_db(fixture_dir, [name])
-      result = push_db(new_db)
+      result = cp_push(new_db)
       expect(result[:stdout].strip).to eq("OK")
       expect(get_items).to eq([name])
     end

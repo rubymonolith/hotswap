@@ -3,17 +3,21 @@ module Hotswap
     config.hotswap = ActiveSupport::OrderedOptions.new
 
     initializer "hotswap.configure" do |app|
-      # Default database path from Rails config
-      if app.config.hotswap.database_path
-        Hotswap.database_path = app.config.hotswap.database_path
+      # Discover all SQLite databases from Rails config
+      if app.config.hotswap.database_paths
+        Array(app.config.hotswap.database_paths).each { |p| Hotswap.register(p) }
+      elsif app.config.hotswap.database_path
+        Hotswap.register(app.config.hotswap.database_path)
       else
-        db_config = app.config.database_configuration[Rails.env]
-        if db_config && db_config["adapter"]&.include?("sqlite")
-          Hotswap.database_path = db_config["database"]
+        db_configs = ActiveRecord::Base.configurations.configs_for(env_name: Rails.env)
+        db_configs.each do |db_config|
+          if db_config.adapter.include?("sqlite")
+            Hotswap.register(db_config.database)
+          end
         end
       end
 
-      # Default socket paths
+      # Socket paths
       if app.config.hotswap.socket_path
         Hotswap.socket_path = app.config.hotswap.socket_path
       else

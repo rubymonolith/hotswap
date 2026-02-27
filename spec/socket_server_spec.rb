@@ -36,7 +36,7 @@ RSpec.describe Hotswap::SocketServer do
     end
   end
 
-  describe "version command (stdout only)" do
+  describe "version command" do
     it "returns the version over the socket" do
       sock = UNIXSocket.new(socket_path)
       sock.write("version\n")
@@ -47,7 +47,7 @@ RSpec.describe Hotswap::SocketServer do
     end
   end
 
-  describe "push command with stderr socket" do
+  describe "cp push with stderr socket" do
     it "swaps the database and sends stderr separately" do
       new_db_path = File.join(tmpdir, "new.sqlite3")
       db = SQLite3::Database.new(new_db_path)
@@ -55,12 +55,11 @@ RSpec.describe Hotswap::SocketServer do
       db.execute("INSERT INTO items (name) VALUES ('swapped')")
       db.close
 
-      # Connect stderr socket first, then main socket
       stderr_sock = UNIXSocket.new(stderr_socket_path)
-      sleep 0.05 # let the server register the stderr client
+      sleep 0.05
 
       sock = UNIXSocket.new(socket_path)
-      sock.write("push\n")
+      sock.write("cp - #{db_path}\n")
       File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
       sock.close_write
 
@@ -80,7 +79,7 @@ RSpec.describe Hotswap::SocketServer do
     end
   end
 
-  describe "push command without stderr socket" do
+  describe "cp push without stderr socket" do
     it "still works with stdout only" do
       new_db_path = File.join(tmpdir, "new.sqlite3")
       db = SQLite3::Database.new(new_db_path)
@@ -89,8 +88,7 @@ RSpec.describe Hotswap::SocketServer do
       db.close
 
       sock = UNIXSocket.new(socket_path)
-      sock.write("push\n")
-      File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
+      sock.write("cp #{new_db_path} #{db_path}\n")
       sock.close_write
 
       output = sock.read
@@ -105,10 +103,10 @@ RSpec.describe Hotswap::SocketServer do
     end
   end
 
-  describe "pull command" do
+  describe "cp pull" do
     it "streams the database file over the socket" do
       sock = UNIXSocket.new(socket_path)
-      sock.write("pull\n")
+      sock.write("cp #{db_path} -\n")
       sock.close_write
 
       pulled_path = File.join(tmpdir, "pulled.sqlite3")
@@ -122,7 +120,7 @@ RSpec.describe Hotswap::SocketServer do
     end
   end
 
-  describe "concurrent requests during push" do
+  describe "concurrent requests during cp" do
     it "queues rack requests while swapping" do
       app = Hotswap::Middleware.new(->(env) {
         db = SQLite3::Database.new(db_path)
@@ -138,8 +136,7 @@ RSpec.describe Hotswap::SocketServer do
       db.close
 
       sock = UNIXSocket.new(socket_path)
-      sock.write("push\n")
-      File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
+      sock.write("cp #{new_db_path} #{db_path}\n")
       sock.close_write
       sock.read
       sock.close

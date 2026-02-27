@@ -3,7 +3,7 @@ require "socket"
 require "sqlite3"
 require "net/http"
 
-RSpec.describe "Integration: full push/pull over sockets", :integration do
+RSpec.describe "Integration: cp over sockets", :integration do
   let(:fixture_dir) { File.expand_path("../tmp/integration_#{Process.pid}", __dir__) }
   let(:db_path) { File.join(fixture_dir, "test.sqlite3") }
   let(:socket_path) { File.join(fixture_dir, "sqlite3.sock") }
@@ -32,7 +32,6 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
   end
 
   def run_client(*args, stdin_data: nil)
-    # Connect stderr first, then main socket
     stderr_sock = UNIXSocket.new(stderr_socket_path)
     sleep 0.05
 
@@ -54,9 +53,10 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
     { stdout: stdout, stderr: stderr }
   end
 
-  describe "push + pull round-trip" do
-    it "replaces the database and pulls back the new one" do
-      result = run_client("pull")
+  describe "cp round-trip" do
+    it "pushes a new database and pulls it back" do
+      # Pull via cp
+      result = run_client("cp", db_path, "-")
       original_bytes = result[:stdout]
       expect(original_bytes.bytesize).to be > 0
 
@@ -67,6 +67,7 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       db.close
       expect(rows).to eq([["alpha"], ["bravo"]])
 
+      # Push via cp with stdin
       new_db_path = File.join(fixture_dir, "replacement.sqlite3")
       db = SQLite3::Database.new(new_db_path)
       db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -75,11 +76,12 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       db.close
 
       new_bytes = File.binread(new_db_path)
-      result = run_client("push", stdin_data: new_bytes)
+      result = run_client("cp", "-", db_path, stdin_data: new_bytes)
       expect(result[:stdout].strip).to eq("OK")
       expect(result[:stderr]).to include("Swapping")
 
-      result = run_client("pull")
+      # Pull again to verify
+      result = run_client("cp", db_path, "-")
       pulled_path2 = File.join(fixture_dir, "pulled_swapped.sqlite3")
       File.binwrite(pulled_path2, result[:stdout])
       db = SQLite3::Database.new(pulled_path2)
@@ -89,9 +91,38 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
     end
   end
 
-  describe "push rejects bad data" do
+  describe "cp with file paths" do
+    it "pushes from a file path" do
+      new_db_path = File.join(fixture_dir, "replacement.sqlite3")
+      db = SQLite3::Database.new(new_db_path)
+      db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+      db.execute("INSERT INTO items (name) VALUES ('from-file')")
+      db.close
+
+      result = run_client("cp", new_db_path, db_path)
+      expect(result[:stdout].strip).to eq("OK")
+
+      db = SQLite3::Database.new(db_path)
+      rows = db.execute("SELECT name FROM items")
+      db.close
+      expect(rows).to eq([["from-file"]])
+    end
+
+    it "pulls to a file path" do
+      pulled_path = File.join(fixture_dir, "pulled.sqlite3")
+      result = run_client("cp", db_path, pulled_path)
+      expect(result[:stderr]).to include("OK")
+
+      db = SQLite3::Database.new(pulled_path)
+      rows = db.execute("SELECT name FROM items ORDER BY name")
+      db.close
+      expect(rows).to eq([["alpha"], ["bravo"]])
+    end
+  end
+
+  describe "cp rejects bad data" do
     it "refuses a corrupt file and leaves the DB intact" do
-      result = run_client("push", stdin_data: "not a database at all")
+      result = run_client("cp", "-", db_path, stdin_data: "not a database at all")
       expect(result[:stderr]).to include("ERROR")
 
       db = SQLite3::Database.new(db_path)
@@ -108,7 +139,7 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
     end
   end
 
-  describe "concurrent push and rack requests" do
+  describe "concurrent cp and rack requests" do
     it "serializes requests through the swap lock" do
       app = Hotswap::Middleware.new(->(env) {
         db = SQLite3::Database.new(db_path)
@@ -126,7 +157,7 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       db.execute("INSERT INTO items (name) VALUES ('echo')")
       db.close
 
-      result = run_client("push", stdin_data: File.binread(new_db_path))
+      result = run_client("cp", "-", db_path, stdin_data: File.binread(new_db_path))
       expect(result[:stdout].strip).to eq("OK")
 
       status, _, body = app.call(Rack::MockRequest.env_for("/items"))
@@ -143,7 +174,7 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
         db.execute("INSERT INTO items (name) VALUES ('iteration_#{i}')")
         db.close
 
-        result = run_client("push", stdin_data: File.binread(new_db_path))
+        result = run_client("cp", new_db_path, db_path)
         expect(result[:stdout].strip).to eq("OK")
 
         db = SQLite3::Database.new(db_path)

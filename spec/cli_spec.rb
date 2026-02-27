@@ -19,8 +19,8 @@ RSpec.describe Hotswap::CLI do
   end
 
   describe "cp" do
-    context "file → database (push)" do
-      it "replaces the database from a file path" do
+    context "file → database path (push)" do
+      it "replaces the database when dst matches the running db path" do
         new_db_path = File.join(tmpdir, "new.sqlite3")
         db = SQLite3::Database.new(new_db_path)
         db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -30,7 +30,7 @@ RSpec.describe Hotswap::CLI do
         output = StringIO.new
         err_output = StringIO.new
 
-        Hotswap::CLI.run(["cp", new_db_path, "database"], stdout: output, stderr: err_output)
+        Hotswap::CLI.run(["cp", new_db_path, db_path], stdout: output, stderr: err_output)
 
         expect(output.string).to eq("OK\n")
         expect(err_output.string).to include("Swapping")
@@ -42,8 +42,64 @@ RSpec.describe Hotswap::CLI do
       end
     end
 
-    context "database → file (pull)" do
-      it "snapshots the database to a file path" do
+    context "database path → file (pull)" do
+      it "snapshots the database when src matches the running db path" do
+        pulled_path = File.join(tmpdir, "pulled.sqlite3")
+        err_output = StringIO.new
+
+        Hotswap::CLI.run(["cp", db_path, pulled_path], stderr: err_output)
+
+        expect(err_output.string).to include("OK")
+
+        db = SQLite3::Database.new(pulled_path)
+        rows = db.execute("SELECT name FROM items")
+        db.close
+        expect(rows).to eq([["original"]])
+      end
+    end
+
+    context "stdin → database path" do
+      it "replaces the database from stdin" do
+        new_db_path = File.join(tmpdir, "new.sqlite3")
+        db = SQLite3::Database.new(new_db_path)
+        db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
+        db.execute("INSERT INTO items (name) VALUES ('from-stdin')")
+        db.close
+
+        output = StringIO.new
+        err_output = StringIO.new
+        input = File.open(new_db_path, "rb")
+
+        Hotswap::CLI.run(["cp", "-", db_path], stdin: input, stdout: output, stderr: err_output)
+
+        expect(output.string).to eq("OK\n")
+
+        db = SQLite3::Database.new(db_path)
+        rows = db.execute("SELECT name FROM items")
+        db.close
+        expect(rows).to eq([["from-stdin"]])
+      end
+    end
+
+    context "database path → stdout" do
+      it "streams the database to stdout" do
+        output = StringIO.new
+        output.binmode
+
+        Hotswap::CLI.run(["cp", db_path, "-"], stdout: output)
+
+        pulled_path = File.join(tmpdir, "pulled.sqlite3")
+        File.binwrite(pulled_path, output.string)
+
+        db = SQLite3::Database.new(pulled_path)
+        rows = db.execute("SELECT name FROM items")
+        db.close
+        expect(rows).to eq([["original"]])
+      end
+    end
+
+    context "'database' keyword still works" do
+      it "accepts 'database' as an alias for the running db" do
         pulled_path = File.join(tmpdir, "pulled.sqlite3")
         err_output = StringIO.new
 
@@ -58,43 +114,13 @@ RSpec.describe Hotswap::CLI do
       end
     end
 
-    context "stdin → database" do
-      it "replaces the database from stdin" do
-        new_db_path = File.join(tmpdir, "new.sqlite3")
-        db = SQLite3::Database.new(new_db_path)
-        db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
-        db.execute("INSERT INTO items (name) VALUES ('from-stdin')")
-        db.close
-
-        output = StringIO.new
+    context "neither arg is the database" do
+      it "returns an error" do
         err_output = StringIO.new
-        input = File.open(new_db_path, "rb")
 
-        Hotswap::CLI.run(["cp", "-", "database"], stdin: input, stdout: output, stderr: err_output)
+        Hotswap::CLI.run(["cp", "/tmp/a.db", "/tmp/b.db"], stderr: err_output)
 
-        expect(output.string).to eq("OK\n")
-
-        db = SQLite3::Database.new(db_path)
-        rows = db.execute("SELECT name FROM items")
-        db.close
-        expect(rows).to eq([["from-stdin"]])
-      end
-    end
-
-    context "database → stdout" do
-      it "streams the database to stdout" do
-        output = StringIO.new
-        output.binmode
-
-        Hotswap::CLI.run(["cp", "database", "-"], stdout: output)
-
-        pulled_path = File.join(tmpdir, "pulled.sqlite3")
-        File.binwrite(pulled_path, output.string)
-
-        db = SQLite3::Database.new(pulled_path)
-        rows = db.execute("SELECT name FROM items")
-        db.close
-        expect(rows).to eq([["original"]])
+        expect(err_output.string).to include("ERROR")
       end
     end
 
@@ -106,7 +132,7 @@ RSpec.describe Hotswap::CLI do
         output = StringIO.new
         err_output = StringIO.new
 
-        Hotswap::CLI.run(["cp", corrupt_file, "database"], stdout: output, stderr: err_output)
+        Hotswap::CLI.run(["cp", corrupt_file, db_path], stdout: output, stderr: err_output)
 
         expect(err_output.string).to include("ERROR")
 
@@ -115,46 +141,6 @@ RSpec.describe Hotswap::CLI do
         db.close
         expect(rows).to eq([["original"]])
       end
-    end
-  end
-
-  describe "push (delegates to cp)" do
-    it "replaces the database from stdin" do
-      new_db_path = File.join(tmpdir, "new.sqlite3")
-      db = SQLite3::Database.new(new_db_path)
-      db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
-      db.execute("INSERT INTO items (name) VALUES ('pushed')")
-      db.close
-
-      output = StringIO.new
-      err_output = StringIO.new
-      input = File.open(new_db_path, "rb")
-
-      Hotswap::CLI.run(["push"], stdin: input, stdout: output, stderr: err_output)
-
-      expect(output.string).to eq("OK\n")
-
-      db = SQLite3::Database.new(db_path)
-      rows = db.execute("SELECT name FROM items")
-      db.close
-      expect(rows).to eq([["pushed"]])
-    end
-  end
-
-  describe "pull (delegates to cp)" do
-    it "streams the database to stdout" do
-      output = StringIO.new
-      output.binmode
-
-      Hotswap::CLI.run(["pull"], stdout: output)
-
-      pulled_path = File.join(tmpdir, "pulled.sqlite3")
-      File.binwrite(pulled_path, output.string)
-
-      db = SQLite3::Database.new(pulled_path)
-      rows = db.execute("SELECT name FROM items")
-      db.close
-      expect(rows).to eq([["original"]])
     end
   end
 
