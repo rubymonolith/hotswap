@@ -27,10 +27,15 @@ module Hotswap
 
       @thread = Thread.new { accept_loop }
       @thread.report_on_exception = false
+
+      logger.info "listening on #{@socket_path}"
+      logger.info "stderr socket on #{@stderr_socket_path}"
+      logger.info "managing #{Hotswap.databases.size} database(s): #{Hotswap.databases.map(&:path).join(', ')}"
       self
     end
 
     def stop
+      logger.info "shutting down"
       @server&.close
       @stderr_server&.close
       @thread&.kill
@@ -44,6 +49,8 @@ module Hotswap
     end
 
     private
+
+    def logger = Hotswap.logger
 
     def accept_loop
       ios = [@server, @stderr_server]
@@ -75,6 +82,7 @@ module Hotswap
 
     def handle_connection(socket)
       unless IO.select([socket], nil, nil, CONNECTION_TIMEOUT)
+        logger.warn "connection timed out"
         socket.write("ERROR: connection timeout\n") rescue nil
         return
       end
@@ -83,6 +91,7 @@ module Hotswap
       return unless line
 
       parts = Shellwords.split(line.strip)
+      logger.info "command: #{parts.join(' ')}" unless parts.empty?
 
       # Grab the stderr socket if one is waiting
       stderr_io = take_stderr_client
@@ -94,6 +103,7 @@ module Hotswap
         stderr: stderr_io || $stderr
       )
     rescue => e
+      logger.error "connection error: #{e.message}"
       socket.write("ERROR: #{e.message}\n") rescue nil
     ensure
       stderr_io&.close rescue nil

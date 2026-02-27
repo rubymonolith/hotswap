@@ -2,6 +2,10 @@ module Hotswap
   class Railtie < Rails::Railtie
     config.hotswap = ActiveSupport::OrderedOptions.new
 
+    initializer "hotswap.logger" do
+      Hotswap.logger = Rails.logger
+    end
+
     initializer "hotswap.configure" do |app|
       # Discover all SQLite databases from Rails config
       if app.config.hotswap.database_paths

@@ -1,3 +1,4 @@
+require "logger"
 require_relative "hotswap/version"
 require_relative "hotswap/middleware"
 require_relative "hotswap/database"
@@ -10,6 +11,11 @@ module Hotswap
 
   class << self
     attr_accessor :socket_path, :stderr_socket_path
+    attr_writer :logger
+
+    def logger
+      @logger ||= Logger.new($stdout, progname: "hotswap")
+    end
 
     def configure
       yield self
