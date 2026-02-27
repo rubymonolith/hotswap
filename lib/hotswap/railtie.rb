@@ -31,7 +31,7 @@ module Hotswap
       app.middleware.use Hotswap::Middleware
     end
 
-    initializer "hotswap.socket_server" do
+    server_command do
       server = Hotswap::SocketServer.new
       server.start
 
