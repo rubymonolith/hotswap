@@ -7,13 +7,13 @@ Hot-swap a SQLite database on a running Rails server without restarting the proc
 Hotswap communicates over a Unix socket (`tmp/sqlite3.sock`). A Rack middleware wraps every request in a mutex. During a swap, the CLI acquires the same mutex — requests queue for microseconds while the database file is renamed, then resume on the new database.
 
 ```
-Client                               Server
-┌───────────────────┐  Unix Socket  ┌───────────────────────┐
-│ bin/hotswap        │──connect────▶│ Socket listener        │
-│  sends command     │──"cp ..."──▶│  parses args           │
-│  pipes stdin       │──bytes─────▶│  Thor CLI runs         │
-│  reads stdout      │◀─output────│  IO = socket            │
-└───────────────────┘              └───────────────────────┘
+Client                                Server
+┌──────────────────┐                  ┌────────────────────┐
+│ bin/hotswap      │── connect ──────▶│ Socket listener    │
+│   sends command  │── "cp ..." ─────▶│   parses args      │
+│   pipes stdin    │── bytes ────────▶│   Thor CLI runs    │
+│   reads stdout   │◀── output ───────│   IO = socket      │
+└──────────────────┘                  └────────────────────┘
 ```
 
 Pull uses SQLite's backup API for WAL-safe consistent snapshots — no need to stop writes.
