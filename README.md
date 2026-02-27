@@ -30,6 +30,7 @@ The railtie auto-configures everything:
 - Inserts the swap-lock middleware
 - Starts the socket server when the web server boots
 - Discovers all SQLite databases from `database.yml` (multi-database supported)
+- Sets `Hotswap.logger` to `Rails.logger`
 
 ## Usage
 
@@ -72,6 +73,36 @@ Swapping database...     # ← stderr
 OK                       # ← stdout
 ```
 
+## Logging
+
+Hotswap logs every step of the swap lifecycle. In Rails, logs go through `Rails.logger`. Without Rails, they default to stdout.
+
+```
+INFO -- hotswap: command: cp new.sqlite3 db/production.sqlite3
+INFO -- hotswap: push started: new.sqlite3 → db/production.sqlite3
+INFO -- hotswap: received 8192 bytes, running integrity check
+INFO -- hotswap: integrity check passed, acquiring swap lock
+INFO -- hotswap: swap lock acquired, requests are queued
+INFO -- hotswap: disconnected ActiveRecord
+INFO -- hotswap: renamed /tmp/hotswap123.sqlite3 → db/production.sqlite3
+INFO -- hotswap: swap lock released, requests resuming
+INFO -- hotswap: reconnected ActiveRecord
+INFO -- hotswap: push complete: db/production.sqlite3
+```
+
+The middleware also logs when requests are queued during a swap:
+
+```
+INFO -- hotswap: request queued, waiting for swap to complete: GET /items
+INFO -- hotswap: swap complete, resuming request: GET /items
+```
+
+To customize the logger:
+
+```ruby
+Hotswap.logger = Logger.new("log/hotswap.log")
+```
+
 ## Why only `cp`?
 
 Hotswap deliberately only supports `cp`. No `ln`, `mv`, or `rm`.
@@ -88,7 +119,7 @@ The atomic rename that `cp` does under the hood *is* a link/unlink at the filesy
 
 ## Configuration
 
-The railtie configures everything automatically. To override:
+The railtie configures everything automatically, including multi-database setups. It discovers all SQLite databases from your `database.yml`. To override:
 
 ```ruby
 # config/application.rb
@@ -118,19 +149,27 @@ end
 
 Either `<src>` or `<dst>` must match a managed database path. Use `-` for stdin/stdout.
 
-## Deployment example
+## Deployment examples
+
+### SSH
 
 ```bash
-# Build a new database locally, push it to production
-sqlite3 new.sqlite3 < schema.sql
+# Two-step
 scp new.sqlite3 server:~/app/tmp/
 ssh server 'cd app && bin/hotswap cp tmp/new.sqlite3 db/production.sqlite3'
+
+# One-shot
+cat new.sqlite3 | ssh server 'cd app && bin/hotswap cp - db/production.sqlite3'
 ```
 
-Or in one shot:
+### Fly.io
 
 ```bash
-cat new.sqlite3 | ssh server 'cd app && bin/hotswap cp - db/production.sqlite3'
+# Push
+cat new.sqlite3 | fly ssh console -C "/rails/bin/hotswap cp - /rails/db/production.sqlite3"
+
+# Pull
+fly ssh console -C "/rails/bin/hotswap cp /rails/db/production.sqlite3 -" > backup.sqlite3
 ```
 
 ## License
