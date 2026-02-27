@@ -6,7 +6,7 @@ require "sqlite3"
 module Hotswap
   class CLI < Thor
     def self.exit_on_failure?
-      true
+      false
     end
 
     # Thread-safe IO: each connection gets its own IO via thread-local storage
@@ -16,6 +16,8 @@ module Hotswap
       Thread.current[:hotswap_stdout] = stdout
       Thread.current[:hotswap_stderr] = stderr
       start(args)
+    rescue SystemExit
+      # Thor calls exit on errors — catch it so we don't kill the server
     ensure
       Thread.current[:hotswap_stdin] = nil
       Thread.current[:hotswap_stdout] = nil

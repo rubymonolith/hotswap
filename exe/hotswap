@@ -23,10 +23,15 @@ sock = UNIXSocket.new(socket_path)
 args = ARGV.map { |a| Shellwords.escape(a) }.join(" ")
 sock.write(args + "\n")
 
-# Pipe stdin to socket (in background thread)
-writer = Thread.new do
-  IO.copy_stream($stdin, sock) rescue nil
-  sock.close_write rescue nil
+# Pipe stdin to socket (only if data is being piped in)
+writer = nil
+if !$stdin.tty?
+  writer = Thread.new do
+    IO.copy_stream($stdin, sock) rescue nil
+    sock.close_write rescue nil
+  end
+else
+  sock.close_write
 end
 
 # Pipe stderr socket to local stderr (in background thread)
@@ -40,7 +45,7 @@ end
 # Pipe socket output to stdout
 IO.copy_stream(sock, $stdout) rescue nil
 
-writer.join
+writer&.join
 stderr_reader&.join
 stderr_sock&.close rescue nil
 sock.close rescue nil
