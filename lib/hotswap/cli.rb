@@ -9,13 +9,26 @@ module Hotswap
       false
     end
 
+    class Shell < Thor::Shell::Basic
+      def initialize(stdout, stderr)
+        super()
+        @_stdout = stdout
+        @_stderr = stderr
+      end
+
+      def stdout = @_stdout
+      def stderr = @_stderr
+    end
+
     # Thread-safe IO: each connection gets its own IO via thread-local storage
     # instead of swapping global $stdin/$stdout/$stderr.
     def self.run(args, stdin: $stdin, stdout: $stdout, stderr: $stderr)
       Thread.current[:hotswap_stdin] = stdin
       Thread.current[:hotswap_stdout] = stdout
       Thread.current[:hotswap_stderr] = stderr
-      start(args)
+
+      args = ["help"] if args.empty?
+      start(args, shell: Shell.new(stdout, stderr))
     rescue SystemExit
       # Thor calls exit on errors — catch it so we don't kill the server
     ensure

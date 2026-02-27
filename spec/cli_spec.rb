@@ -168,6 +168,29 @@ RSpec.describe Hotswap::CLI do
     end
   end
 
+  describe "help (no args)" do
+    it "prints help to stdout" do
+      output = StringIO.new
+
+      Hotswap::CLI.run([], stdout: output)
+
+      expect(output.string).to include("cp SRC DST")
+      expect(output.string).to include("version")
+    end
+  end
+
+  describe "unknown command" do
+    it "prints error without crashing" do
+      output = StringIO.new
+      err_output = StringIO.new
+
+      Hotswap::CLI.run(["bogus"], stdout: output, stderr: err_output)
+
+      combined = output.string + err_output.string
+      expect(combined).to include("Could not find")
+    end
+  end
+
   describe "thread safety" do
     it "handles concurrent CLI calls without clobbering IO" do
       results = Array.new(5) { StringIO.new }
