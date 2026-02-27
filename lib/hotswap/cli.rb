@@ -1,11 +1,25 @@
 require "thor"
 require "tempfile"
+require "fileutils"
 require "sqlite3"
 
 module Hotswap
   class CLI < Thor
     def self.exit_on_failure?
       true
+    end
+
+    # Thread-safe IO: each connection gets its own IO via thread-local storage
+    # instead of swapping global $stdin/$stdout/$stderr.
+    def self.run(args, stdin: $stdin, stdout: $stdout, stderr: $stderr)
+      Thread.current[:hotswap_stdin] = stdin
+      Thread.current[:hotswap_stdout] = stdout
+      Thread.current[:hotswap_stderr] = stderr
+      start(args)
+    ensure
+      Thread.current[:hotswap_stdin] = nil
+      Thread.current[:hotswap_stdout] = nil
+      Thread.current[:hotswap_stderr] = nil
     end
 
     desc "cp SRC DST", "Copy a database to/from the running server. Use 'database' to refer to the running database."
@@ -25,12 +39,12 @@ module Hotswap
     def cp(src, dst)
       db_path = Hotswap.database_path
       unless db_path
-        $stderr.write("ERROR: database_path not configured\n")
+        io_err.write("ERROR: database_path not configured\n")
         return
       end
 
       if src == "database" && dst == "database"
-        $stderr.write("ERROR: source and destination can't both be 'database'\n")
+        io_err.write("ERROR: source and destination can't both be 'database'\n")
         return
       end
 
@@ -39,7 +53,7 @@ module Hotswap
       elsif src == "database"
         pull_database(dst, db_path)
       else
-        $stderr.write("ERROR: one of src/dst must be 'database'\n")
+        io_err.write("ERROR: one of src/dst must be 'database'\n")
       end
     end
 
@@ -55,13 +69,17 @@ module Hotswap
 
     desc "version", "Print the hotswap version"
     def version
-      $stdout.write("hotswap #{Hotswap::VERSION}\n")
+      io_out.write("hotswap #{Hotswap::VERSION}\n")
     end
 
     private
 
+    def io_in  = Thread.current[:hotswap_stdin]  || $stdin
+    def io_out = Thread.current[:hotswap_stdout] || $stdout
+    def io_err = Thread.current[:hotswap_stderr] || $stderr
+
     def push_database(src, db_path)
-      input = (src == "-") ? $stdin : File.open(src, "rb")
+      input = (src == "-") ? io_in : File.open(src, "rb")
 
       dir = File.dirname(db_path)
       temp = Tempfile.new(["hotswap", ".sqlite3"], dir)
@@ -73,11 +91,11 @@ module Hotswap
         result = db.execute("PRAGMA integrity_check")
         db.close
         unless result == [["ok"]]
-          $stderr.write("ERROR: integrity check failed\n")
+          io_err.write("ERROR: integrity check failed\n")
           return
         end
 
-        $stderr.write("Swapping database...\n")
+        io_err.write("Swapping database...\n")
 
         Middleware::SWAP_LOCK.synchronize do
           if defined?(ActiveRecord::Base)
@@ -90,9 +108,9 @@ module Hotswap
           ActiveRecord::Base.establish_connection
         end
 
-        $stdout.write("OK\n")
+        io_out.write("OK\n")
       rescue => e
-        $stderr.write("ERROR: #{e.message}\n")
+        io_err.write("ERROR: #{e.message}\n")
       ensure
         input.close if input.is_a?(File)
         temp.unlink if temp && File.exist?(temp.path)
@@ -101,7 +119,7 @@ module Hotswap
 
     def pull_database(dst, db_path)
       unless File.exist?(db_path)
-        $stderr.write("ERROR: database file not found\n")
+        io_err.write("ERROR: database file not found\n")
         return
       end
 
@@ -117,13 +135,13 @@ module Hotswap
         src_db.close
 
         if dst == "-"
-          File.open(temp.path, "rb") { |f| IO.copy_stream(f, $stdout) }
+          File.open(temp.path, "rb") { |f| IO.copy_stream(f, io_out) }
         else
           FileUtils.cp(temp.path, dst)
-          $stderr.write("OK\n")
+          io_err.write("OK\n")
         end
       rescue => e
-        $stderr.write("ERROR: #{e.message}\n")
+        io_err.write("ERROR: #{e.message}\n")
       ensure
         temp.unlink if temp && File.exist?(temp.path)
       end

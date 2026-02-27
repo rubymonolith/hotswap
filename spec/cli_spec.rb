@@ -30,11 +30,7 @@ RSpec.describe Hotswap::CLI do
         output = StringIO.new
         err_output = StringIO.new
 
-        $stdout = output
-        $stderr = err_output
-        Hotswap::CLI.start(["cp", new_db_path, "database"])
-        $stdout = STDOUT
-        $stderr = STDERR
+        Hotswap::CLI.run(["cp", new_db_path, "database"], stdout: output, stderr: err_output)
 
         expect(output.string).to eq("OK\n")
         expect(err_output.string).to include("Swapping")
@@ -51,9 +47,7 @@ RSpec.describe Hotswap::CLI do
         pulled_path = File.join(tmpdir, "pulled.sqlite3")
         err_output = StringIO.new
 
-        $stderr = err_output
-        Hotswap::CLI.start(["cp", "database", pulled_path])
-        $stderr = STDERR
+        Hotswap::CLI.run(["cp", "database", pulled_path], stderr: err_output)
 
         expect(err_output.string).to include("OK")
 
@@ -76,13 +70,7 @@ RSpec.describe Hotswap::CLI do
         err_output = StringIO.new
         input = File.open(new_db_path, "rb")
 
-        $stdin = input
-        $stdout = output
-        $stderr = err_output
-        Hotswap::CLI.start(["cp", "-", "database"])
-        $stdin = STDIN
-        $stdout = STDOUT
-        $stderr = STDERR
+        Hotswap::CLI.run(["cp", "-", "database"], stdin: input, stdout: output, stderr: err_output)
 
         expect(output.string).to eq("OK\n")
 
@@ -98,9 +86,7 @@ RSpec.describe Hotswap::CLI do
         output = StringIO.new
         output.binmode
 
-        $stdout = output
-        Hotswap::CLI.start(["cp", "database", "-"])
-        $stdout = STDOUT
+        Hotswap::CLI.run(["cp", "database", "-"], stdout: output)
 
         pulled_path = File.join(tmpdir, "pulled.sqlite3")
         File.binwrite(pulled_path, output.string)
@@ -120,11 +106,7 @@ RSpec.describe Hotswap::CLI do
         output = StringIO.new
         err_output = StringIO.new
 
-        $stdout = output
-        $stderr = err_output
-        Hotswap::CLI.start(["cp", corrupt_file, "database"])
-        $stdout = STDOUT
-        $stderr = STDERR
+        Hotswap::CLI.run(["cp", corrupt_file, "database"], stdout: output, stderr: err_output)
 
         expect(err_output.string).to include("ERROR")
 
@@ -148,13 +130,7 @@ RSpec.describe Hotswap::CLI do
       err_output = StringIO.new
       input = File.open(new_db_path, "rb")
 
-      $stdin = input
-      $stdout = output
-      $stderr = err_output
-      Hotswap::CLI.start(["push"])
-      $stdin = STDIN
-      $stdout = STDOUT
-      $stderr = STDERR
+      Hotswap::CLI.run(["push"], stdin: input, stdout: output, stderr: err_output)
 
       expect(output.string).to eq("OK\n")
 
@@ -170,9 +146,7 @@ RSpec.describe Hotswap::CLI do
       output = StringIO.new
       output.binmode
 
-      $stdout = output
-      Hotswap::CLI.start(["pull"])
-      $stdout = STDOUT
+      Hotswap::CLI.run(["pull"], stdout: output)
 
       pulled_path = File.join(tmpdir, "pulled.sqlite3")
       File.binwrite(pulled_path, output.string)
@@ -188,11 +162,26 @@ RSpec.describe Hotswap::CLI do
     it "prints the version" do
       output = StringIO.new
 
-      $stdout = output
-      Hotswap::CLI.start(["version"])
-      $stdout = STDOUT
+      Hotswap::CLI.run(["version"], stdout: output)
 
       expect(output.string).to eq("hotswap #{Hotswap::VERSION}\n")
+    end
+  end
+
+  describe "thread safety" do
+    it "handles concurrent CLI calls without clobbering IO" do
+      results = Array.new(5) { StringIO.new }
+
+      threads = results.map do |out|
+        Thread.new do
+          Hotswap::CLI.run(["version"], stdout: out)
+        end
+      end
+      threads.each(&:join)
+
+      results.each do |out|
+        expect(out.string).to eq("hotswap #{Hotswap::VERSION}\n")
+      end
     end
   end
 end

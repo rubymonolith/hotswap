@@ -43,14 +43,12 @@ RSpec.describe Hotswap::SocketServer do
       db.execute("INSERT INTO items (name) VALUES ('swapped')")
       db.close
 
-      # Connect stderr socket first with a key
-      stderr_key = "testkey123"
+      # Connect stderr socket first, then main socket
       stderr_sock = UNIXSocket.new(stderr_socket_path)
-      stderr_sock.write("#{stderr_key}\n")
+      sleep 0.05 # let the server register the stderr client
 
-      # Connect main socket and send push with stderr key
       sock = UNIXSocket.new(socket_path)
-      sock.write("push --stderr-key=#{stderr_key}\n")
+      sock.write("push\n")
       File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
       sock.close_write
 
@@ -63,7 +61,6 @@ RSpec.describe Hotswap::SocketServer do
       expect(stdout_output.strip).to eq("OK")
       expect(stderr_output).to include("Swapping")
 
-      # Verify the swap happened
       db = SQLite3::Database.new(db_path)
       rows = db.execute("SELECT name FROM items")
       db.close
@@ -122,7 +119,6 @@ RSpec.describe Hotswap::SocketServer do
         [200, {}, [rows.first.first]]
       })
 
-      # Start a push in a background thread
       new_db_path = File.join(tmpdir, "concurrent.sqlite3")
       db = SQLite3::Database.new(new_db_path)
       db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -136,7 +132,6 @@ RSpec.describe Hotswap::SocketServer do
       sock.read
       sock.close
 
-      # After the swap, requests should see the new data
       status, _, body = app.call(Rack::MockRequest.env_for("/"))
       expect(status).to eq(200)
       expect(body.first).to eq("concurrent")

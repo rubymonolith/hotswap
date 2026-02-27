@@ -1,8 +1,11 @@
 require "socket"
+require "shellwords"
 
 module Hotswap
   class SocketServer
     attr_reader :socket_path, :stderr_socket_path
+
+    CONNECTION_TIMEOUT = 10
 
     def initialize(socket_path: Hotswap.socket_path, stderr_socket_path: Hotswap.stderr_socket_path)
       @socket_path = socket_path
@@ -10,7 +13,7 @@ module Hotswap
       @server = nil
       @stderr_server = nil
       @thread = nil
-      @stderr_clients = {}
+      @stderr_client = nil
       @stderr_mutex = Mutex.new
     end
 
@@ -30,7 +33,10 @@ module Hotswap
       @server&.close
       @stderr_server&.close
       @thread&.kill
-      @stderr_mutex.synchronize { @stderr_clients.each_value(&:close) rescue nil }
+      @stderr_mutex.synchronize do
+        @stderr_client&.close rescue nil
+        @stderr_client = nil
+      end
       [@socket_path, @stderr_socket_path].each do |path|
         File.delete(path) if path && File.exist?(path)
       end
@@ -45,7 +51,10 @@ module Hotswap
         readable.each do |server|
           client = server.accept
           if server == @stderr_server
-            register_stderr_client(client)
+            @stderr_mutex.synchronize do
+              @stderr_client&.close rescue nil
+              @stderr_client = client
+            end
           else
             Thread.new(client) { |sock| handle_connection(sock) }
           end
@@ -55,57 +64,35 @@ module Hotswap
       # Server was closed, exit gracefully
     end
 
-    def register_stderr_client(client)
-      # stderr client sends its PID on first line so we can match it
-      line = client.gets
-      return client.close unless line
-      key = line.strip
-      @stderr_mutex.synchronize { @stderr_clients[key] = client }
-    end
-
-    def take_stderr_client(key)
-      @stderr_mutex.synchronize { @stderr_clients.delete(key) }
+    def take_stderr_client
+      @stderr_mutex.synchronize do
+        client = @stderr_client
+        @stderr_client = nil
+        client
+      end
     end
 
     def handle_connection(socket)
-      # First line is the command args
+      unless IO.select([socket], nil, nil, CONNECTION_TIMEOUT)
+        socket.write("ERROR: connection timeout\n") rescue nil
+        return
+      end
+
       line = socket.gets
       return unless line
 
-      parts = line.strip.split(/\s+/)
-      # Last part may be --stderr-key=<key>
-      stderr_key = nil
-      parts.reject! do |p|
-        if p.start_with?("--stderr-key=")
-          stderr_key = p.split("=", 2).last
-          true
-        end
-      end
+      parts = Shellwords.split(line.strip)
+      return if parts.empty?
 
-      # Wait briefly for the stderr client to connect
-      stderr_io = nil
-      if stderr_key
-        5.times do
-          stderr_io = take_stderr_client(stderr_key)
-          break if stderr_io
-          sleep 0.01
-        end
-      end
+      # Grab the stderr socket if one is waiting
+      stderr_io = take_stderr_client
 
-      # Wire the socket as stdin/stdout and stderr socket as stderr for the CLI
-      old_stdin = $stdin
-      old_stdout = $stdout
-      old_stderr = $stderr
-      begin
-        $stdin = socket
-        $stdout = socket
-        $stderr = stderr_io || $stderr
-        Hotswap::CLI.start(parts)
-      ensure
-        $stdin = old_stdin
-        $stdout = old_stdout
-        $stderr = old_stderr
-      end
+      Hotswap::CLI.run(
+        parts,
+        stdin: socket,
+        stdout: socket,
+        stderr: stderr_io || $stderr
+      )
     rescue => e
       socket.write("ERROR: #{e.message}\n") rescue nil
     ensure

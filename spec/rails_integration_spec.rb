@@ -64,12 +64,11 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
   end
 
   def push_db(new_db_path)
-    stderr_key = SecureRandom.hex(8)
     stderr_sock = UNIXSocket.new(stderr_socket_path)
-    stderr_sock.write("#{stderr_key}\n")
+    sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    sock.write("push --stderr-key=#{stderr_key}\n")
+    sock.write("push\n")
     File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
     sock.close_write
 
@@ -82,12 +81,11 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
   end
 
   def pull_db
-    stderr_key = SecureRandom.hex(8)
     stderr_sock = UNIXSocket.new(stderr_socket_path)
-    stderr_sock.write("#{stderr_key}\n")
+    sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    sock.write("pull --stderr-key=#{stderr_key}\n")
+    sock.write("pull\n")
     sock.close_write
 
     stdout = sock.read
@@ -162,12 +160,11 @@ RSpec.describe "Rails integration: boot app, push, verify", :rails do
   it "rejects a corrupt push and keeps serving original data" do
     expect(get_items).to eq(["alpha", "bravo"])
 
-    stderr_key = SecureRandom.hex(8)
     stderr_sock = UNIXSocket.new(stderr_socket_path)
-    stderr_sock.write("#{stderr_key}\n")
+    sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    sock.write("push --stderr-key=#{stderr_key}\n")
+    sock.write("push\n")
     sock.write("this is not a sqlite database")
     sock.close_write
 

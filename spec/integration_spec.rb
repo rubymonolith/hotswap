@@ -1,7 +1,6 @@
 require "spec_helper"
 require "socket"
 require "sqlite3"
-require "securerandom"
 require "net/http"
 
 RSpec.describe "Integration: full push/pull over sockets", :integration do
@@ -14,7 +13,6 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
   before do
     FileUtils.mkdir_p(fixture_dir)
 
-    # Create the original database
     db = SQLite3::Database.new(db_path)
     db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
     db.execute("INSERT INTO items (name) VALUES ('alpha')")
@@ -34,13 +32,12 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
   end
 
   def run_client(*args, stdin_data: nil)
-    stderr_key = SecureRandom.hex(8)
+    # Connect stderr first, then main socket
     stderr_sock = UNIXSocket.new(stderr_socket_path)
-    stderr_sock.write("#{stderr_key}\n")
+    sleep 0.05
 
     sock = UNIXSocket.new(socket_path)
-    cmd = (args + ["--stderr-key=#{stderr_key}"]).join(" ")
-    sock.write("#{cmd}\n")
+    sock.write(args.join(" ") + "\n")
 
     if stdin_data
       sock.write(stdin_data)
@@ -59,12 +56,10 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
 
   describe "push + pull round-trip" do
     it "replaces the database and pulls back the new one" do
-      # Pull the original
       result = run_client("pull")
       original_bytes = result[:stdout]
       expect(original_bytes.bytesize).to be > 0
 
-      # Verify pulled DB is valid
       pulled_path = File.join(fixture_dir, "pulled_original.sqlite3")
       File.binwrite(pulled_path, original_bytes)
       db = SQLite3::Database.new(pulled_path)
@@ -72,7 +67,6 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       db.close
       expect(rows).to eq([["alpha"], ["bravo"]])
 
-      # Create a replacement DB
       new_db_path = File.join(fixture_dir, "replacement.sqlite3")
       db = SQLite3::Database.new(new_db_path)
       db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -80,13 +74,11 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       db.execute("INSERT INTO items (name) VALUES ('delta')")
       db.close
 
-      # Push it
       new_bytes = File.binread(new_db_path)
       result = run_client("push", stdin_data: new_bytes)
       expect(result[:stdout].strip).to eq("OK")
       expect(result[:stderr]).to include("Swapping")
 
-      # Pull the swapped DB
       result = run_client("pull")
       pulled_path2 = File.join(fixture_dir, "pulled_swapped.sqlite3")
       File.binwrite(pulled_path2, result[:stdout])
@@ -102,7 +94,6 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       result = run_client("push", stdin_data: "not a database at all")
       expect(result[:stderr]).to include("ERROR")
 
-      # Original DB is still intact
       db = SQLite3::Database.new(db_path)
       rows = db.execute("SELECT name FROM items ORDER BY name")
       db.close
@@ -126,11 +117,9 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
         [200, { "content-type" => "application/json" }, [rows.map(&:first).join(",")]]
       })
 
-      # Verify pre-swap
       status, _, body = app.call(Rack::MockRequest.env_for("/items"))
       expect(body.first).to eq("alpha,bravo")
 
-      # Push a new DB
       new_db_path = File.join(fixture_dir, "concurrent.sqlite3")
       db = SQLite3::Database.new(new_db_path)
       db.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)")
@@ -140,7 +129,6 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
       result = run_client("push", stdin_data: File.binread(new_db_path))
       expect(result[:stdout].strip).to eq("OK")
 
-      # Verify post-swap
       status, _, body = app.call(Rack::MockRequest.env_for("/items"))
       expect(body.first).to eq("echo")
     end
@@ -158,7 +146,6 @@ RSpec.describe "Integration: full push/pull over sockets", :integration do
         result = run_client("push", stdin_data: File.binread(new_db_path))
         expect(result[:stdout].strip).to eq("OK")
 
-        # Verify
         db = SQLite3::Database.new(db_path)
         rows = db.execute("SELECT name FROM items")
         db.close
