@@ -37,8 +37,8 @@ class FixtureApp < Rails::Application
   config.active_record.maintain_test_schema = false
 
   config.hotswap.database_path = DB_PATH
-  config.hotswap.socket_path = File.join(FIXTURE_DIR, "sqlite3.sock")
-  config.hotswap.stderr_socket_path = File.join(FIXTURE_DIR, "sqlite3.stderr.sock")
+  config.hotswap.socket_path = File.join(FIXTURE_DIR, "hotswap.sock")
+  config.hotswap.stderr_socket_path = File.join(FIXTURE_DIR, "hotswap.stderr.sock")
 end
 
 class ApplicationRecord < ActiveRecord::Base
@@ -78,6 +78,10 @@ if __FILE__ == $0
   end
 
   require "rackup/handler/webrick"
+
+  server = Hotswap::SocketServer.new
+  server.start
+  at_exit { server.stop }
 
   $stderr.puts "Hotswap fixture app listening on port #{PORT}"
   $stderr.puts "  DB: #{DB_PATH}"

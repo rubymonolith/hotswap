@@ -17,13 +17,13 @@ module Hotswap
       if app.config.hotswap.socket_path
         Hotswap.socket_path = app.config.hotswap.socket_path
       else
-        Hotswap.socket_path = File.join(app.root, "tmp", "hotswap.sock")
+        Hotswap.socket_path = File.join(app.root, "tmp", "sockets", "hotswap.sock")
       end
 
       if app.config.hotswap.stderr_socket_path
         Hotswap.stderr_socket_path = app.config.hotswap.stderr_socket_path
       else
-        Hotswap.stderr_socket_path = File.join(app.root, "tmp", "hotswap.stderr.sock")
+        Hotswap.stderr_socket_path = File.join(app.root, "tmp", "sockets", "hotswap.stderr.sock")
       end
     end
 
@@ -31,7 +31,7 @@ module Hotswap
       app.middleware.use Hotswap::Middleware
     end
 
-    server_command do
+    server do
       server = Hotswap::SocketServer.new
       server.start
 

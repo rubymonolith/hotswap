@@ -21,6 +21,7 @@ module Hotswap
       cleanup_stale_socket(@socket_path)
       cleanup_stale_socket(@stderr_socket_path)
 
+      FileUtils.mkdir_p(File.dirname(@socket_path))
       @server = UNIXServer.new(@socket_path)
       @stderr_server = UNIXServer.new(@stderr_socket_path)
 

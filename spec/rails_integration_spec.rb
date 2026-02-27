@@ -8,8 +8,8 @@ require "json"
 RSpec.describe "Rails integration: boot app, push, verify", :rails do
   let(:fixture_dir) { File.expand_path("../tmp/rails_#{Process.pid}", __dir__) }
   let(:db_path) { File.join(fixture_dir, "test.sqlite3") }
-  let(:socket_path) { File.join(fixture_dir, "sqlite3.sock") }
-  let(:stderr_socket_path) { File.join(fixture_dir, "sqlite3.stderr.sock") }
+  let(:socket_path) { File.join(fixture_dir, "hotswap.sock") }
+  let(:stderr_socket_path) { File.join(fixture_dir, "hotswap.stderr.sock") }
   let(:port) { 9293 + rand(100) }
   let(:app_script) { File.expand_path("fixture_app/app.rb", __dir__) }
 
