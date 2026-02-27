@@ -15,6 +15,6 @@ module Hotswap
     end
   end
 
-  self.socket_path = "tmp/sqlite3.sock"
-  self.stderr_socket_path = "tmp/sqlite3.stderr.sock"
+  self.socket_path = "tmp/hotswap.sock"
+  self.stderr_socket_path = "tmp/hotswap.stderr.sock"
 end

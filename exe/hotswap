@@ -3,8 +3,8 @@
 require "socket"
 require "shellwords"
 
-socket_path = ENV.fetch("HOTSWAP_SOCKET", "tmp/sqlite3.sock")
-stderr_socket_path = ENV.fetch("HOTSWAP_STDERR_SOCKET", "tmp/sqlite3.stderr.sock")
+socket_path = ENV.fetch("HOTSWAP_SOCKET", "tmp/hotswap.sock")
+stderr_socket_path = ENV.fetch("HOTSWAP_STDERR_SOCKET", "tmp/hotswap.stderr.sock")
 
 unless File.exist?(socket_path)
   $stderr.puts "ERROR: socket not found at #{socket_path}"

@@ -17,13 +17,13 @@ module Hotswap
       if app.config.hotswap.socket_path
         Hotswap.socket_path = app.config.hotswap.socket_path
       else
-        Hotswap.socket_path = File.join(app.root, "tmp", "sqlite3.sock")
+        Hotswap.socket_path = File.join(app.root, "tmp", "hotswap.sock")
       end
 
       if app.config.hotswap.stderr_socket_path
         Hotswap.stderr_socket_path = app.config.hotswap.stderr_socket_path
       else
-        Hotswap.stderr_socket_path = File.join(app.root, "tmp", "sqlite3.stderr.sock")
+        Hotswap.stderr_socket_path = File.join(app.root, "tmp", "hotswap.stderr.sock")
       end
     end
 
