@@ -37,6 +37,7 @@ module Hotswap
         stderr.write("Swapping database...\n")
 
         Middleware::SWAP_LOCK.synchronize do
+          logger.info "swap lock acquired, requests are queued"
           if defined?(ActiveRecord::Base)
             ActiveRecord::Base.connection_handler.clear_all_connections!
             logger.info "disconnected ActiveRecord"
@@ -44,6 +45,7 @@ module Hotswap
           File.rename(temp.path, @path)
           logger.info "renamed #{temp.path} → #{@path}"
         end
+        logger.info "swap lock released, requests resuming"
 
         if defined?(ActiveRecord::Base)
           ActiveRecord::Base.establish_connection
