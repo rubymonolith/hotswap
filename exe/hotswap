@@ -1,0 +1,49 @@
+#!/usr/bin/env ruby
+
+require "socket"
+require "securerandom"
+
+socket_path = ENV.fetch("HOTSWAP_SOCKET", "tmp/sqlite3.sock")
+stderr_socket_path = ENV.fetch("HOTSWAP_STDERR_SOCKET", "tmp/sqlite3.stderr.sock")
+
+unless File.exist?(socket_path)
+  $stderr.puts "ERROR: socket not found at #{socket_path}"
+  exit 1
+end
+
+# Connect stderr socket first (if available) so it's registered before the command runs
+stderr_sock = nil
+stderr_key = SecureRandom.hex(8)
+if File.exist?(stderr_socket_path)
+  stderr_sock = UNIXSocket.new(stderr_socket_path)
+  stderr_sock.write("#{stderr_key}\n")
+end
+
+sock = UNIXSocket.new(socket_path)
+
+# Send command args with stderr key as first line
+args = ARGV.join(" ")
+args += " --stderr-key=#{stderr_key}" if stderr_sock
+sock.write(args + "\n")
+
+# Pipe stdin to socket (in background thread)
+writer = Thread.new do
+  IO.copy_stream($stdin, sock) rescue nil
+  sock.close_write rescue nil
+end
+
+# Pipe stderr socket to local stderr (in background thread)
+stderr_reader = nil
+if stderr_sock
+  stderr_reader = Thread.new do
+    IO.copy_stream(stderr_sock, $stderr) rescue nil
+  end
+end
+
+# Pipe socket output to stdout
+IO.copy_stream(sock, $stdout) rescue nil
+
+writer.join
+stderr_reader&.join
+stderr_sock&.close rescue nil
+sock.close rescue nil
