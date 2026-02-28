@@ -1,3 +1,4 @@
+require "active_record"
 require "hotswap"
 require "rack/test"
 require "tempfile"
@@ -15,4 +16,9 @@ RSpec.configure do |config|
   config.filter_run_when_matching :focus
   config.disable_monkey_patching!
   config.order = :random
+
+  config.before do
+    allow(ActiveRecord::Base.connection_handler).to receive(:clear_all_connections!)
+    allow(ActiveRecord::Base).to receive(:establish_connection)
+  end
 end

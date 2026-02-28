@@ -38,19 +38,14 @@ module Hotswap
 
         Middleware::SWAP_LOCK.synchronize do
           logger.info "swap lock acquired, requests are queued"
-          if defined?(ActiveRecord::Base)
-            ActiveRecord::Base.connection_handler.clear_all_connections!
-            logger.info "disconnected ActiveRecord"
-          end
+          ActiveRecord::Base.connection_handler.clear_all_connections!
+          logger.info "disconnected ActiveRecord"
           File.rename(temp.path, @path)
           logger.info "renamed #{temp.path} → #{@path}"
         end
         logger.info "swap lock released, requests resuming"
-
-        if defined?(ActiveRecord::Base)
-          ActiveRecord::Base.establish_connection
-          logger.info "reconnected ActiveRecord"
-        end
+        ActiveRecord::Base.establish_connection
+        logger.info "reconnected ActiveRecord"
 
         logger.info "push complete: #{@path}"
         stdout.write("OK\n")
