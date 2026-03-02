@@ -1,13 +1,13 @@
 require "spec_helper"
 require "socket"
 require "sqlite3"
+require "json"
 
-RSpec.describe Hotswap::SocketServer do
+RSpec.describe Thor::Socket::Server, "with Hotswap::CLI" do
   let(:tmpdir) { Dir.mktmpdir }
   let(:socket_path) { File.join(tmpdir, "test.sock") }
-  let(:stderr_socket_path) { File.join(tmpdir, "test.stderr.sock") }
   let(:db_path) { File.join(tmpdir, "test.sqlite3") }
-  let(:server) { Hotswap::SocketServer.new(socket_path: socket_path, stderr_socket_path: stderr_socket_path) }
+  let(:server) { Thor::Socket::Server.new(Hotswap::CLI, socket_path: socket_path) }
 
   before do
     db = SQLite3::Database.new(db_path)
@@ -24,30 +24,39 @@ RSpec.describe Hotswap::SocketServer do
     FileUtils.rm_rf(tmpdir)
   end
 
+  def run_client(*args, stdin_data: nil)
+    stdout = StringIO.new
+    stderr = StringIO.new
+    stdin = stdin_data ? StringIO.new(stdin_data) : StringIO.new
+
+    Thor::Socket::Client.connect(
+      socket_path,
+      args: args,
+      stdin: stdin,
+      stdout: stdout,
+      stderr: stderr,
+      tty: false
+    )
+
+    { stdout: stdout.string, stderr: stderr.string }
+  end
+
   describe "no args (help)" do
     it "returns help output over the socket" do
-      sock = UNIXSocket.new(socket_path)
-      sock.write("\n")
-      sock.close_write
-      output = sock.read
-      sock.close
-      expect(output).to include("cp SRC DST")
-      expect(output).to include("version")
+      result = run_client
+      expect(result[:stdout]).to include("cp SRC DST")
+      expect(result[:stdout]).to include("version")
     end
   end
 
   describe "version command" do
     it "returns the version over the socket" do
-      sock = UNIXSocket.new(socket_path)
-      sock.write("version\n")
-      sock.close_write
-      output = sock.read
-      sock.close
-      expect(output).to eq("hotswap #{Hotswap::VERSION}\n")
+      result = run_client("version")
+      expect(result[:stdout]).to eq("hotswap #{Hotswap::VERSION}\n")
     end
   end
 
-  describe "cp push with stderr socket" do
+  describe "cp push" do
     it "swaps the database and sends stderr separately" do
       new_db_path = File.join(tmpdir, "new.sqlite3")
       db = SQLite3::Database.new(new_db_path)
@@ -55,22 +64,10 @@ RSpec.describe Hotswap::SocketServer do
       db.execute("INSERT INTO items (name) VALUES ('swapped')")
       db.close
 
-      stderr_sock = UNIXSocket.new(stderr_socket_path)
-      sleep 0.05
+      result = run_client("cp", "-", db_path, stdin_data: File.binread(new_db_path))
 
-      sock = UNIXSocket.new(socket_path)
-      sock.write("cp - #{db_path}\n")
-      File.open(new_db_path, "rb") { |f| IO.copy_stream(f, sock) }
-      sock.close_write
-
-      stdout_output = sock.read
-      stderr_output = stderr_sock.read
-
-      sock.close
-      stderr_sock.close
-
-      expect(stdout_output.strip).to eq("OK")
-      expect(stderr_output).to include("Swapping")
+      expect(result[:stdout].strip).to eq("OK")
+      expect(result[:stderr]).to include("Swapping")
 
       db = SQLite3::Database.new(db_path)
       rows = db.execute("SELECT name FROM items")
@@ -79,7 +76,7 @@ RSpec.describe Hotswap::SocketServer do
     end
   end
 
-  describe "cp push without stderr socket" do
+  describe "cp push from file path" do
     it "still works with stdout only" do
       new_db_path = File.join(tmpdir, "new.sqlite3")
       db = SQLite3::Database.new(new_db_path)
@@ -87,14 +84,9 @@ RSpec.describe Hotswap::SocketServer do
       db.execute("INSERT INTO items (name) VALUES ('no-stderr')")
       db.close
 
-      sock = UNIXSocket.new(socket_path)
-      sock.write("cp #{new_db_path} #{db_path}\n")
-      sock.close_write
+      result = run_client("cp", new_db_path, db_path)
 
-      output = sock.read
-      sock.close
-
-      expect(output.strip).to eq("OK")
+      expect(result[:stdout].strip).to eq("OK")
 
       db = SQLite3::Database.new(db_path)
       rows = db.execute("SELECT name FROM items")
@@ -105,13 +97,21 @@ RSpec.describe Hotswap::SocketServer do
 
   describe "cp pull" do
     it "streams the database file over the socket" do
-      sock = UNIXSocket.new(socket_path)
-      sock.write("cp #{db_path} -\n")
-      sock.close_write
+      stdout = StringIO.new
+      stdout.binmode
+      stderr = StringIO.new
+
+      Thor::Socket::Client.connect(
+        socket_path,
+        args: ["cp", db_path, "-"],
+        stdin: StringIO.new,
+        stdout: stdout,
+        stderr: stderr,
+        tty: false
+      )
 
       pulled_path = File.join(tmpdir, "pulled.sqlite3")
-      File.open(pulled_path, "wb") { |f| IO.copy_stream(sock, f) }
-      sock.close
+      File.binwrite(pulled_path, stdout.string)
 
       db = SQLite3::Database.new(pulled_path)
       rows = db.execute("SELECT name FROM items")
@@ -135,11 +135,8 @@ RSpec.describe Hotswap::SocketServer do
       db.execute("INSERT INTO items (name) VALUES ('concurrent')")
       db.close
 
-      sock = UNIXSocket.new(socket_path)
-      sock.write("cp #{new_db_path} #{db_path}\n")
-      sock.close_write
-      sock.read
-      sock.close
+      result = run_client("cp", new_db_path, db_path)
+      expect(result[:stdout].strip).to eq("OK")
 
       status, _, body = app.call(Rack::MockRequest.env_for("/"))
       expect(status).to eq(200)

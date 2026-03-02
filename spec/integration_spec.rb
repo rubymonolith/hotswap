@@ -1,14 +1,13 @@
 require "spec_helper"
 require "socket"
 require "sqlite3"
-require "net/http"
+require "json"
 
 RSpec.describe "Integration: cp over sockets", :integration do
   let(:fixture_dir) { File.expand_path("../tmp/integration_#{Process.pid}", __dir__) }
   let(:db_path) { File.join(fixture_dir, "test.sqlite3") }
   let(:socket_path) { File.join(fixture_dir, "sqlite3.sock") }
-  let(:stderr_socket_path) { File.join(fixture_dir, "sqlite3.stderr.sock") }
-  let(:server) { Hotswap::SocketServer.new(socket_path: socket_path, stderr_socket_path: stderr_socket_path) }
+  let(:server) { Thor::Socket::Server.new(Hotswap::CLI, socket_path: socket_path) }
 
   before do
     FileUtils.mkdir_p(fixture_dir)
@@ -21,7 +20,6 @@ RSpec.describe "Integration: cp over sockets", :integration do
 
     Hotswap.database_path = db_path
     Hotswap.socket_path = socket_path
-    Hotswap.stderr_socket_path = stderr_socket_path
     server.start
   end
 
@@ -32,25 +30,21 @@ RSpec.describe "Integration: cp over sockets", :integration do
   end
 
   def run_client(*args, stdin_data: nil)
-    stderr_sock = UNIXSocket.new(stderr_socket_path)
-    sleep 0.05
+    stdout = StringIO.new
+    stdout.binmode
+    stderr = StringIO.new
+    stdin = stdin_data ? StringIO.new(stdin_data) : StringIO.new
 
-    sock = UNIXSocket.new(socket_path)
-    sock.write(args.join(" ") + "\n")
+    Thor::Socket::Client.connect(
+      socket_path,
+      args: args,
+      stdin: stdin,
+      stdout: stdout,
+      stderr: stderr,
+      tty: false
+    )
 
-    if stdin_data
-      sock.write(stdin_data)
-      sock.close_write
-    else
-      sock.close_write
-    end
-
-    stdout = sock.read
-    stderr = stderr_sock.read
-    sock.close
-    stderr_sock.close
-
-    { stdout: stdout, stderr: stderr }
+    { stdout: stdout.string, stderr: stderr.string }
   end
 
   describe "cp round-trip" do

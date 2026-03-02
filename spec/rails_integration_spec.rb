@@ -9,7 +9,6 @@ RSpec.describe "Rails integration: boot app, cp, verify", :rails do
   let(:fixture_dir) { File.expand_path("../tmp/rails_#{Process.pid}", __dir__) }
   let(:db_path) { File.join(fixture_dir, "test.sqlite3") }
   let(:socket_path) { File.join(fixture_dir, "hotswap.sock") }
-  let(:stderr_socket_path) { File.join(fixture_dir, "hotswap.stderr.sock") }
   let(:port) { 9293 + rand(100) }
   let(:app_script) { File.expand_path("fixture_app/app.rb", __dir__) }
 
@@ -60,51 +59,35 @@ RSpec.describe "Rails integration: boot app, cp, verify", :rails do
     JSON.parse(body)
   end
 
+  def run_client(*args, stdin_data: nil)
+    stdout = StringIO.new
+    stdout.binmode
+    stderr = StringIO.new
+    stdin = stdin_data ? StringIO.new(stdin_data) : StringIO.new
+
+    Thor::Socket::Client.connect(
+      socket_path,
+      args: args,
+      stdin: stdin,
+      stdout: stdout,
+      stderr: stderr,
+      tty: false
+    )
+
+    { stdout: stdout.string, stderr: stderr.string }
+  end
+
   def cp_push(new_db_path)
-    stderr_sock = UNIXSocket.new(stderr_socket_path)
-    sleep 0.05
-
-    sock = UNIXSocket.new(socket_path)
-    sock.write("cp #{new_db_path} #{db_path}\n")
-    sock.close_write
-
-    stdout = sock.read
-    stderr_out = stderr_sock.read
-    sock.close
-    stderr_sock.close
-
-    { stdout: stdout, stderr: stderr_out }
+    run_client("cp", new_db_path, db_path)
   end
 
   def cp_pull(destination)
-    stderr_sock = UNIXSocket.new(stderr_socket_path)
-    sleep 0.05
-
-    sock = UNIXSocket.new(socket_path)
-    sock.write("cp #{db_path} #{destination}\n")
-    sock.close_write
-
-    stdout = sock.read
-    stderr_out = stderr_sock.read
-    sock.close
-    stderr_sock.close
-
-    { stdout: stdout, stderr: stderr_out }
+    run_client("cp", db_path, destination)
   end
 
   def cp_pull_stdout
-    stderr_sock = UNIXSocket.new(stderr_socket_path)
-    sleep 0.05
-
-    sock = UNIXSocket.new(socket_path)
-    sock.write("cp #{db_path} -\n")
-    sock.close_write
-
-    stdout = sock.read
-    stderr_sock.close
-    sock.close
-
-    stdout
+    result = run_client("cp", db_path, "-")
+    result[:stdout]
   end
 
   def make_db(fixture_dir, rows)
@@ -179,20 +162,9 @@ RSpec.describe "Rails integration: boot app, cp, verify", :rails do
   it "rejects a corrupt push and keeps serving original data" do
     expect(get_items).to eq(["alpha", "bravo"])
 
-    stderr_sock = UNIXSocket.new(stderr_socket_path)
-    sleep 0.05
+    result = run_client("cp", "-", db_path, stdin_data: "this is not a sqlite database")
 
-    sock = UNIXSocket.new(socket_path)
-    sock.write("cp - #{db_path}\n")
-    sock.write("this is not a sqlite database")
-    sock.close_write
-
-    stdout = sock.read
-    stderr_out = stderr_sock.read
-    sock.close
-    stderr_sock.close
-
-    expect(stderr_out).to include("ERROR")
+    expect(result[:stderr]).to include("ERROR")
 
     expect(get_items).to eq(["alpha", "bravo"])
   end
