@@ -2,15 +2,15 @@ require "logger"
 require_relative "hotswap/version"
 require_relative "hotswap/middleware"
 require_relative "hotswap/database"
+require_relative "thor/socket"
 require_relative "hotswap/cli"
-require_relative "hotswap/socket_server"
 require_relative "hotswap/railtie" if defined?(Rails::Railtie)
 
 module Hotswap
   class Error < StandardError; end
 
   class << self
-    attr_accessor :socket_path, :stderr_socket_path
+    attr_accessor :socket_path
     attr_writer :logger
 
     def logger
@@ -50,5 +50,4 @@ module Hotswap
   end
 
   self.socket_path = "tmp/sockets/hotswap.sock"
-  self.stderr_socket_path = "tmp/sockets/hotswap.stderr.sock"
 end

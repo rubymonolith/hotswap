@@ -6,30 +6,16 @@ module Hotswap
       false
     end
 
-    class Shell < Thor::Shell::Basic
-      def initialize(stdout, stderr)
-        super()
-        @_stdout = stdout
-        @_stderr = stderr
-      end
-
-      def stdout = @_stdout
-      def stderr = @_stderr
-    end
-
     def self.run(args, stdin: $stdin, stdout: $stdout, stderr: $stderr)
       Thread.current[:hotswap_stdin] = stdin
-      Thread.current[:hotswap_stdout] = stdout
-      Thread.current[:hotswap_stderr] = stderr
 
       args = ["help"] if args.empty?
-      start(args, shell: Shell.new(stdout, stderr))
+      shell = Thor::Socket::Shell.new(stdout, stderr)
+      start(args, shell: shell)
     rescue SystemExit
       # Thor calls exit on errors — catch it so we don't kill the server
     ensure
       Thread.current[:hotswap_stdin] = nil
-      Thread.current[:hotswap_stdout] = nil
-      Thread.current[:hotswap_stderr] = nil
     end
 
     desc "cp SRC DST", "Copy a database to/from the running server"
@@ -51,32 +37,30 @@ module Hotswap
       dst_db = resolve_database(dst)
 
       if src_db && dst_db
-        io_err.write("ERROR: source and destination can't both be managed databases\n")
+        shell.stderr.write("ERROR: source and destination can't both be managed databases\n")
         return
       end
 
       if dst_db
         source = (src == "-") ? io_in : src
-        dst_db.push(source, stdout: io_out, stderr: io_err)
+        dst_db.push(source, stdout: shell.stdout, stderr: shell.stderr)
       elsif src_db
-        destination = (dst == "-") ? io_out : dst
-        src_db.pull(destination, stderr: io_err)
+        destination = (dst == "-") ? shell.stdout : dst
+        src_db.pull(destination, stderr: shell.stderr)
       else
         paths = Hotswap.databases.map(&:path).join(", ")
-        io_err.write("ERROR: neither path matches a managed database (#{paths})\n")
+        shell.stderr.write("ERROR: neither path matches a managed database (#{paths})\n")
       end
     end
 
-desc "version", "Print the hotswap version"
+    desc "version", "Print the hotswap version"
     def version
-      io_out.write("hotswap #{Hotswap::VERSION}\n")
+      shell.stdout.write("hotswap #{Hotswap::VERSION}\n")
     end
 
     private
 
-    def io_in  = Thread.current[:hotswap_stdin]  || $stdin
-    def io_out = Thread.current[:hotswap_stdout] || $stdout
-    def io_err = Thread.current[:hotswap_stderr] || $stderr
+    def io_in = Thread.current[:hotswap_stdin] || $stdin
 
     def resolve_database(path)
       return nil if path == "-"

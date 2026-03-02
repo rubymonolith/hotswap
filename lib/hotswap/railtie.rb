@@ -21,17 +21,11 @@ module Hotswap
         end
       end
 
-      # Socket paths
+      # Socket path
       if app.config.hotswap.socket_path
         Hotswap.socket_path = app.config.hotswap.socket_path
       else
         Hotswap.socket_path = File.join(app.root, "tmp", "sockets", "hotswap.sock")
-      end
-
-      if app.config.hotswap.stderr_socket_path
-        Hotswap.stderr_socket_path = app.config.hotswap.stderr_socket_path
-      else
-        Hotswap.stderr_socket_path = File.join(app.root, "tmp", "sockets", "hotswap.stderr.sock")
       end
     end
 
@@ -40,8 +34,14 @@ module Hotswap
     end
 
     server do
-      server = Hotswap::SocketServer.new
+      server = Thor::Socket::Server.new(
+        Hotswap::CLI,
+        socket_path: Hotswap.socket_path,
+        logger: Hotswap.logger
+      )
       server.start
+
+      Hotswap.logger.info "managing #{Hotswap.databases.size} database(s): #{Hotswap.databases.map(&:path).join(', ')}"
 
       at_exit { server.stop }
     end

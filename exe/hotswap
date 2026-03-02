@@ -1,51 +1,80 @@
 #!/usr/bin/env ruby
 
 require "socket"
-require "shellwords"
+require "json"
+
+# Inline protocol encode/decode so the client has zero gem dependencies
+module ThorSocketProtocol
+  HEADER_SIZE = 5
+
+  def self.encode(channel, data)
+    data = data.b
+    [channel, data.bytesize].pack("CN") + data
+  end
+
+  def self.decode(io)
+    header = io.read(HEADER_SIZE)
+    return nil if header.nil? || header.bytesize < HEADER_SIZE
+    channel, length = header.unpack("CN")
+    payload = io.read(length)
+    return nil if payload.nil? || payload.bytesize < length
+    [channel, payload]
+  end
+end
+
+STDIN_CH  = 0
+STDOUT_CH = 1
+STDERR_CH = 2
+CTRL_CH   = 3
 
 socket_path = ENV.fetch("HOTSWAP_SOCKET", "tmp/sockets/hotswap.sock")
-stderr_socket_path = ENV.fetch("HOTSWAP_STDERR_SOCKET", "tmp/sockets/hotswap.stderr.sock")
 
 unless File.exist?(socket_path)
   $stderr.puts "ERROR: socket not found at #{socket_path}"
   exit 1
 end
 
-# Connect stderr socket first so it's ready before the command runs
-stderr_sock = nil
-if File.exist?(stderr_socket_path)
-  stderr_sock = UNIXSocket.new(stderr_socket_path)
-end
-
 sock = UNIXSocket.new(socket_path)
 
-# Shell-escape args to preserve spaces in file paths
-args = ARGV.map { |a| Shellwords.escape(a) }.join(" ")
-sock.write(args + "\n")
+# Send control frame with args and tty status
+control = { "args" => ARGV, "tty" => $stdout.tty? }
+sock.write(ThorSocketProtocol.encode(CTRL_CH, JSON.generate(control)))
 
-# Pipe stdin to socket (only if data is being piped in)
+# Pipe stdin if '-' is an argument and stdin isn't a tty
 writer = nil
-if !$stdin.tty?
+if ARGV.include?("-") && !$stdin.tty?
   writer = Thread.new do
-    IO.copy_stream($stdin, sock) rescue nil
-    sock.close_write rescue nil
-  end
-else
-  sock.close_write
-end
-
-# Pipe stderr socket to local stderr (in background thread)
-stderr_reader = nil
-if stderr_sock
-  stderr_reader = Thread.new do
-    IO.copy_stream(stderr_sock, $stderr) rescue nil
+    begin
+      buf = String.new(capacity: 16384)
+      while $stdin.read(16384, buf)
+        sock.write(ThorSocketProtocol.encode(STDIN_CH, buf))
+      end
+    rescue IOError, Errno::EPIPE
+    ensure
+      sock.write(ThorSocketProtocol.encode(STDIN_CH, "")) rescue nil
+    end
   end
 end
 
-# Pipe socket output to stdout
-IO.copy_stream(sock, $stdout) rescue nil
+# Read frames from server
+exit_code = 0
+loop do
+  result = ThorSocketProtocol.decode(sock)
+  break unless result
+
+  channel, data = result
+  case channel
+  when STDOUT_CH
+    $stdout.write(data)
+  when STDERR_CH
+    $stderr.write(data)
+  when CTRL_CH
+    ctrl = JSON.parse(data)
+    exit_code = ctrl.fetch("exit", 0)
+    break
+  end
+end
 
 writer&.join
-stderr_reader&.join
-stderr_sock&.close rescue nil
 sock.close rescue nil
+exit exit_code

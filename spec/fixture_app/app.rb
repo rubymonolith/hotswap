@@ -38,7 +38,6 @@ class FixtureApp < Rails::Application
 
   config.hotswap.database_path = DB_PATH
   config.hotswap.socket_path = File.join(FIXTURE_DIR, "hotswap.sock")
-  config.hotswap.stderr_socket_path = File.join(FIXTURE_DIR, "hotswap.stderr.sock")
 end
 
 class ApplicationRecord < ActiveRecord::Base
@@ -79,7 +78,7 @@ if __FILE__ == $0
 
   require "rackup/handler/webrick"
 
-  server = Hotswap::SocketServer.new
+  server = Thor::Socket::Server.new(Hotswap::CLI, socket_path: Hotswap.socket_path, logger: Hotswap.logger)
   server.start
   at_exit { server.stop }
 
