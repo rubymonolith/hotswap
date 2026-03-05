@@ -11,7 +11,7 @@ module Hotswap
     end
 
     # Push a new database from an IO stream or file path
-    def push(source, stdout: $stdout, stderr: $stderr)
+    def push(source, stdout: $stdout, stderr: $stderr, skip_integrity_check: false, skip_schema_check: false)
       source_label = source.is_a?(String) ? source : "stdin"
       logger.info "push started: #{source_label} → #{@path}"
 
@@ -22,18 +22,42 @@ module Hotswap
       begin
         IO.copy_stream(input, temp)
         temp.close
-        logger.info "received #{File.size(temp.path)} bytes, running integrity check"
+        logger.info "received #{File.size(temp.path)} bytes"
 
-        db = SQLite3::Database.new(temp.path)
-        result = db.execute("PRAGMA integrity_check")
-        db.close
-        unless result == [["ok"]]
-          logger.error "integrity check failed for #{source_label}"
-          stderr.write("ERROR: integrity check failed\n")
-          return false
+        unless skip_integrity_check
+          logger.info "running integrity check"
+          db = SQLite3::Database.new(temp.path)
+          result = db.execute("PRAGMA integrity_check")
+          db.close
+          unless result == [["ok"]]
+            logger.error "integrity check failed for #{source_label}"
+            stderr.write("ERROR: integrity check failed\n")
+            return false
+          end
+          logger.info "integrity check passed"
         end
 
-        logger.info "integrity check passed, acquiring swap lock"
+        unless skip_schema_check
+          logger.info "running schema check"
+          new_db = SQLite3::Database.new(temp.path)
+          cur_db = SQLite3::Database.new(@path)
+          new_schema = new_db.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name").flatten
+          cur_schema = cur_db.execute("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name").flatten
+          new_db.close
+          cur_db.close
+
+          if new_schema != cur_schema
+            logger.error "schema mismatch for #{source_label}"
+            diff_lines = []
+            (cur_schema - new_schema).each { |s| diff_lines << "- #{s}" }
+            (new_schema - cur_schema).each { |s| diff_lines << "+ #{s}" }
+            stderr.write("ERROR: schema mismatch\n#{diff_lines.join("\n")}\n")
+            return false
+          end
+          logger.info "schema check passed"
+        end
+
+        logger.info "acquiring swap lock"
         stderr.write("Swapping database...\n")
 
         Middleware::SWAP_LOCK.synchronize do

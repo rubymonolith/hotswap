@@ -114,6 +114,24 @@ RSpec.describe "Integration: cp over sockets", :integration do
     end
   end
 
+  describe "cp rejects schema mismatch" do
+    it "refuses a database with different schema and leaves the DB intact" do
+      mismatched_path = File.join(fixture_dir, "mismatched.sqlite3")
+      db = SQLite3::Database.new(mismatched_path)
+      db.execute("CREATE TABLE other_table (id INTEGER PRIMARY KEY, value TEXT)")
+      db.execute("INSERT INTO other_table (value) VALUES ('nope')")
+      db.close
+
+      result = run_client("cp", "-", db_path, stdin_data: File.binread(mismatched_path))
+      expect(result[:stderr]).to include("ERROR: schema mismatch")
+
+      db = SQLite3::Database.new(db_path)
+      rows = db.execute("SELECT name FROM items ORDER BY name")
+      db.close
+      expect(rows).to eq([["alpha"], ["bravo"]])
+    end
+  end
+
   describe "cp rejects bad data" do
     it "refuses a corrupt file and leaves the DB intact" do
       result = run_client("cp", "-", db_path, stdin_data: "not a database at all")

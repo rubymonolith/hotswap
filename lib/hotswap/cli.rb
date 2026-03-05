@@ -32,6 +32,8 @@ module Hotswap
         hotswap cp - db/production.sqlite3                # push from stdin
         hotswap cp db/production.sqlite3 -                # pull to stdout
     DESC
+    method_option :skip_integrity_check, type: :boolean, default: false, desc: "Skip SQLite integrity check on push"
+    method_option :skip_schema_check, type: :boolean, default: false, desc: "Skip schema compatibility check on push"
     def cp(src, dst)
       src_db = resolve_database(src)
       dst_db = resolve_database(dst)
@@ -43,7 +45,9 @@ module Hotswap
 
       if dst_db
         source = (src == "-") ? io_in : src
-        dst_db.push(source, stdout: shell.stdout, stderr: shell.stderr)
+        dst_db.push(source, stdout: shell.stdout, stderr: shell.stderr,
+          skip_integrity_check: options[:skip_integrity_check],
+          skip_schema_check: options[:skip_schema_check])
       elsif src_db
         destination = (dst == "-") ? shell.stdout : dst
         src_db.pull(destination, stderr: shell.stderr)
