@@ -5,3 +5,4 @@ pkg/
 *.sqlite3-shm
 *.sock
 *.gem
+.claude/
