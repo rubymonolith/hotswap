@@ -40,7 +40,7 @@ The railtie auto-configures everything:
 bin/hotswap cp ./new.sqlite3 db/production.sqlite3
 ```
 
-The file is integrity-checked before the swap. If it's corrupt, the running database is untouched.
+The file is integrity-checked and schema-checked before the swap. If it's corrupt or has a different schema, the running database is untouched.
 
 ### Snapshot the running database
 
@@ -63,6 +63,21 @@ bin/hotswap cp db/production.sqlite3 - > backup.sqlite3
 ssh prod 'cd app && bin/hotswap cp db/production.sqlite3 -' | bin/hotswap cp - db/production.sqlite3
 ```
 
+### Skipping checks
+
+By default, pushes run an integrity check and a schema compatibility check. You can skip either:
+
+```bash
+# Skip integrity check (e.g. you already verified the file)
+bin/hotswap cp ./new.sqlite3 db/production.sqlite3 --skip-integrity-check
+
+# Skip schema check (e.g. intentional migration)
+bin/hotswap cp ./new.sqlite3 db/production.sqlite3 --skip-schema-check
+
+# Skip both
+bin/hotswap cp ./new.sqlite3 db/production.sqlite3 --skip-integrity-check --skip-schema-check
+```
+
 ### Stderr
 
 Errors and status messages go to a separate stderr socket (`tmp/sockets/hotswap.stderr.sock`), so they never mix with binary database output during a pull.
@@ -80,8 +95,12 @@ Hotswap logs every step of the swap lifecycle. In Rails, logs go through `Rails.
 ```
 INFO -- hotswap: command: cp new.sqlite3 db/production.sqlite3
 INFO -- hotswap: push started: new.sqlite3 → db/production.sqlite3
-INFO -- hotswap: received 8192 bytes, running integrity check
-INFO -- hotswap: integrity check passed, acquiring swap lock
+INFO -- hotswap: received 8192 bytes
+INFO -- hotswap: running integrity check
+INFO -- hotswap: integrity check passed
+INFO -- hotswap: running schema check
+INFO -- hotswap: schema check passed
+INFO -- hotswap: acquiring swap lock
 INFO -- hotswap: swap lock acquired, requests are queued
 INFO -- hotswap: disconnected ActiveRecord
 INFO -- hotswap: renamed /tmp/hotswap123.sqlite3 → db/production.sqlite3
@@ -107,7 +126,7 @@ Hotswap.logger = Logger.new("log/hotswap.log")
 
 Hotswap deliberately only supports `cp`. No `ln`, `mv`, or `rm`.
 
-**`cp` is safe.** The new database is written to a temp file, integrity-checked, then atomically renamed into place inside a swap lock. If anything fails, the original database is untouched. Worst case: an orphaned temp file.
+**`cp` is safe.** The new database is written to a temp file, integrity-checked, schema-checked against the running database, then atomically renamed into place inside a swap lock. If anything fails, the original database is untouched. Worst case: an orphaned temp file.
 
 **`ln` would bypass safety.** Symlinks mean WAL/SHM files get created next to the link, not the target. The source file stays mutable — modifications happen outside the swap lock with no integrity check. Hard links have similar issues with SQLite's locking model.
 
@@ -148,6 +167,13 @@ end
 | `hotswap version` | Print version |
 
 Either `<src>` or `<dst>` must match a managed database path. Use `-` for stdin/stdout.
+
+**Push flags:**
+
+| Flag | Description |
+|---|---|
+| `--skip-integrity-check` | Skip SQLite integrity check |
+| `--skip-schema-check` | Skip schema compatibility check |
 
 ## Deployment examples
 
